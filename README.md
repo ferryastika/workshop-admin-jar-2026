@@ -34,9 +34,14 @@ Workshop Administrasi Jaringan adalah mata kuliah praktikum **3 SKS** (1 teori +
 ### Network Design
 - **Backbone:** `10.252.108.0/24` (Internet NAT access)
 - **Kelompok 01-10:** `192.168.101-110.0/24` (VLAN isolated)
-- **3 VM per kelompok:** Ubuntu Server 24.04 + Rocky Linux 9
+- **2 VM per kelompok:** Ubuntu Server 24.04
+  - `srv1 (.10)`: infrastructure/control-plane
+  - `srv2 (.11)`: workload/data-plane
+- **RB1100:** gateway/NAT per kelompok; DHCP menjadi layanan praktikum di `srv1`
 
-📐 **[Lihat Topologi Lengkap](./TOPOLOGI_MERMAID_LENGKAP.md)** (13 diagram Mermaid)
+📐 **[Lihat Topologi Sederhana](./TOPOLOGI_MERMAID_LENGKAP.md)**
+
+Desain 2 VM mengurangi kebutuhan lab dari 30 VM menjadi **20 VM** untuk 10 kelompok, sambil tetap mempertahankan skenario client/server, monitoring, automation, Kubernetes, VPN, dan security.
 
 ---
 
@@ -53,7 +58,7 @@ Workshop Administrasi Jaringan adalah mata kuliah praktikum **3 SKS** (1 teori +
 | **7** | Monitoring & Observability | [MINGGU_7_MONITORING_LENGKAP.md](./MINGGU_7_MONITORING_LENGKAP.md) | Prometheus, node_exporter, Grafana |
 | **8** | **UTS (Ujian Tengah Semester)** | [MINGGU_8_UTS_LENGKAP.md](./MINGGU_8_UTS_LENGKAP.md) | 3 scenario praktik + troubleshooting |
 | **9** | Container Networking | [MINGGU_9_DOCKER_LENGKAP.md](./MINGGU_9_DOCKER_LENGKAP.md) | Docker bridge/host/macvlan, Compose |
-| **10** | Kubernetes Networking | [MINGGU_10_K8S_LENGKAP.md](./MINGGU_10_K8S_LENGKAP.md) | K3s cluster, Calico CNI, NetworkPolicy |
+| **10** | Kubernetes Networking | [MINGGU_10_K8S_LENGKAP.md](./MINGGU_10_K8S_LENGKAP.md) | K3s 2-node, Flannel, NetworkPolicy |
 | **11** | Network Automation | [MINGGU_11_ANSIBLE_LENGKAP.md](./MINGGU_11_ANSIBLE_LENGKAP.md) | Ansible playbooks, roles, inventory |
 | **12** | SDN/SD-WAN | [MINGGU_12_SDN_WIREGUARD_LENGKAP.md](./MINGGU_12_SDN_WIREGUARD_LENGKAP.md) | WireGuard overlay, policy routing |
 | **13** | Network Security | [MINGGU_13_SECURITY_LENGKAP.md](./MINGGU_13_SECURITY_LENGKAP.md) | nftables, Suricata IDS, fail2ban |
@@ -77,12 +82,12 @@ Setiap file modul berisi:
 ## 🎓 Project Akhir (Minggu 14)
 
 ### Requirements
-- ✅ Network design 3+ subnets
+- ✅ Network design berbasis VLAN kelompok + subnet lab + overlay
 - ✅ Core services (DNS, DHCP, Web, File)
 - ✅ Prometheus + Grafana monitoring (4+ panels)
 - ✅ Ansible automation deployment
 - ✅ Docker Compose (3+ containers)
-- ✅ Kubernetes deployment + service
+- ✅ Kubernetes deployment + service pada K3s 2-node
 - ✅ Security (nftables, VPN, IDS)
 
 ### Deliverables
@@ -98,3 +103,4 @@ Setiap file modul berisi:
 
 ## 🛠️ Tech Stack
 
+Linux · MikroTik · Proxmox · BIND9 · ISC DHCP · Chrony · Nginx · NFS · Samba · Prometheus · Grafana · Docker · K3s · Ansible · WireGuard · nftables · Suricata
