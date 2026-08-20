@@ -1,126 +1,107 @@
-
 # MINGGU 10: KUBERNETES NETWORKING
-## WORKSHOP ADMIN JARINGAN - PENS TI 2026 [file:1]
+## WORKSHOP ADMIN JARINGAN - PENS TI 2026
 
 ### DASAR TEORI (1 jam)
 **Kubernetes Networking Model:**
 ```
-Pod-to-Pod: Same node (veth) / Cross node (Overlay)
-Pod-to-Service: kube-proxy iptables/ipvs
-External-to-Service: NodePort/LoadBalancer/Ingress
+Pod-to-Pod: veth + CNI
+Pod-to-Service: ClusterIP
+External-to-Service: NodePort / Ingress
 ```
 
-**CNI Plugins:**
-| Plugin | Overlay | NetworkPolicy | Performance |
-|--------|---------|---------------|-------------|
-| Flannel | VXLAN | Basic | Good |
-| Calico | BGP/IPIP | Advanced | Excellent |
-| Weave | VXLAN | Good | Excellent |
+Untuk baseline workshop digunakan **K3s 2-node**:
+- `srv1`: K3s server/control-plane
+- `srv2`: K3s agent/worker
+- CNI: Flannel bawaan K3s
+
+Custom CNI seperti Calico dibahas sebagai materi pengayaan, bukan dependency wajib lab.
 
 ### PERTANYAAN TEORI
-1. Pod IP ephemeral vs Service IP stable kenapa?
-2. kube-proxy modes: iptables vs ipvs?
-3. NetworkPolicy default deny bagaimana?
-4. Ingress vs LoadBalancer perbedaan?
+1. Mengapa Pod IP bersifat ephemeral sedangkan Service IP stabil?
+2. Apa beda ClusterIP, NodePort, dan Ingress?
+3. Apa fungsi CNI?
+4. Apa tradeoff cluster 2-node untuk teaching lab dibanding production cluster?
 
 ### KEBUTUHAN PRAKTIKUM
 **Topologi:**
 ```
-K3s Master (srv1) ← CNI → Worker Nodes (srv2,srv3)
-                     ↓ Services/Ingress
-                 Laptop kubectl/curl
-```
-
-**Hosts:**
-```
-K3s Master: kXX-srv1 192.168.1XX.10
-K3s Worker1: kXX-srv2 192.168.1XX.11
-K3s Worker2: kXX-srv3 192.168.1XX.12
-```
-
-**Aplikasi:**
-```
-k3s, kubectl, calico/flannel CNI
+Laptop
+  ↓ kubectl/curl
+srv1 (.10) K3s Server  ←→  srv2 (.11) K3s Agent
+        \______ Flannel Pod Network ______/
 ```
 
 ### LANGKAH PRAKTIKUM (2 jam)
 
-**1. K3s Cluster Installation (25 menit)**
+**1. Install K3s Server pada srv1 (20 menit)**
 ```bash
-# srv1: Master
 curl -sfL https://get.k3s.io | sh -
 sudo kubectl get nodes
-
-# srv2,srv3: Workers
-curl -sfL https://get.k3s.io | K3S_URL=https://192.168.1XX.10:6443 \
-  K3S_TOKEN=$(sudo cat /var/lib/rancher/k3s/server/node-token) sh -
+sudo cat /var/lib/rancher/k3s/server/node-token
 ```
 
-**2. CNI Plugin Calico (15 menit)**
+**2. Join srv2 sebagai Agent (20 menit)**
+Salin token dari srv1, kemudian pada srv2:
 ```bash
-# Master: Install Calico
-kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.2/manifests/calico.yaml
-
-# Verify
-kubectl get pods -n calico-system
-kubectl get daemonsets calico-node
+curl -sfL https://get.k3s.io | \
+  K3S_URL=https://192.168.1XX.10:6443 \
+  K3S_TOKEN='<TOKEN_DARI_SRV1>' sh -
 ```
 
-**3. Basic Deployment & Service (20 menit)**
+Kembali ke srv1:
 ```bash
-# Nginx deployment
-kubectl create deployment nginx --image=nginx --replicas=3
-kubectl expose deployment nginx --port=80 --type=ClusterIP
-
-# Verify
-kubectl get deployments,pods,svc
-kubectl get endpoints nginx
+sudo kubectl get nodes -o wide
 ```
+Expected: 2 node `Ready`.
 
-**4. Service Types Testing (20 menit)**
+**3. Verifikasi Networking Bawaan (15 menit)**
 ```bash
-# NodePort
-kubectl expose deployment nginx --name nginx-nodeport --type=NodePort --port=80
-kubectl get svc nginx-nodeport
-NODE_PORT=$(kubectl get svc nginx-nodeport -o jsonpath='{.spec.ports[0].nodePort}')
-curl 192.168.1XX.11:$NODE_PORT
-
-# LoadBalancer simulation
-kubectl expose deployment nginx --name nginx-lb --type=LoadBalancer
+sudo kubectl get pods -A
+sudo kubectl get nodes -o wide
+ip link | grep flannel || true
 ```
+Identifikasi Pod CIDR dan Service CIDR yang digunakan cluster.
 
-**5. Network Policies (25 menit)**
+**4. Deployment + ClusterIP (20 menit)**
 ```bash
-# Allow nginx → mariadb only
-nano policy.yaml
+sudo kubectl create deployment nginx --image=nginx --replicas=2
+sudo kubectl expose deployment nginx --port=80 --type=ClusterIP
+sudo kubectl get pods -o wide
+sudo kubectl get svc nginx
 ```
+Pastikan replica tersebar atau identifikasi node tempat pod berjalan.
+
+**5. NodePort (15 menit)**
+```bash
+sudo kubectl expose deployment nginx \
+  --name nginx-nodeport --type=NodePort --port=80
+sudo kubectl get svc nginx-nodeport
+```
+Uji dari laptop ke alamat node dan NodePort yang diberikan.
+
+**6. NetworkPolicy Dasar (20 menit)**
+Buat pod client dan policy default-deny ingress untuk pod nginx:
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: nginx-egress
+  name: deny-nginx-ingress
 spec:
   podSelector:
     matchLabels:
       app: nginx
   policyTypes:
-  - Egress
-  egress:
-  - to:
-    - podSelector:
-        matchLabels:
-          app: mariadb
-```
-```bash
-kubectl apply -f policy.yaml
-kubectl describe networkpolicy nginx-egress
+    - Ingress
 ```
 
-**6. Ingress Controller (15 menit)**
 ```bash
-# Ingress nginx
-nano ingress.yaml
+sudo kubectl apply -f policy.yaml
+sudo kubectl describe networkpolicy deny-nginx-ingress
 ```
+Amati perubahan akses dan diskusikan bagaimana enforcement policy bekerja pada distribusi K3s yang digunakan.
+
+**7. Ingress (20 menit)**
+K3s menyediakan ingress controller bawaan pada instalasi default. Buat resource:
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -139,49 +120,28 @@ spec:
             port:
               number: 80
 ```
+
 ```bash
-kubectl apply -f ingress.yaml
-kubectl get ingress
+sudo kubectl apply -f ingress.yaml
+sudo kubectl get ingress
 ```
+Tambahkan record DNS/hosts yang diperlukan lalu uji dari laptop.
 
 ### UJI KONFIGURASI
+```bash
+sudo kubectl get nodes
+sudo kubectl get pods -o wide
+sudo kubectl get svc
+sudo kubectl get ingress
+sudo kubectl get networkpolicy
 ```
-kubectl get all
-NAME                          READY   STATUS
-pod/nginx-xxx                 1/1     Running
-service/nginx                 ClusterIP
-service/nginx-nodeport        NodePort   80:3XXXX/TCP
-
-kubectl exec nginx-pod -- curl nginx-service:80  # Pod-to-Service OK
-```
-
-**Screenshot Wajib (12 gambar):**
-1. `kubectl get nodes`
-2. Calico pods running
-3. Deployment + service list
-4. NodePort curl output
-5. NetworkPolicy describe
-6. Ingress resource
-7. `kubectl top nodes`
-8. `kubectl top pods`
-9. Calico daemonset
-10. Endpoints nginx
-11. Exec pod-to-service
-12. Custom dashboard Grafana (opsional)
-
-### PERTANYAAN SEKITAR PRAKTIKUM
-1. Jika pod cross-node tidak connect, cek CNI?
-2. NetworkPolicy label selector salah efeknya?
-3. LoadBalancer type di single node cluster?
-4. kubectl port-forward vs NodePort?
 
 ### CHECKLIST TUGAS MINGGU 10
-- [ ] K3s 3-node cluster
-- [ ] Calico CNI operational
-- [ ] Deployment + 3 service types
-- [ ] NetworkPolicy applied
-- [ ] Ingress controller
-- [ ] 12 screenshot lengkap
+- [ ] K3s 2-node cluster
+- [ ] srv1 server + srv2 agent `Ready`
+- [ ] Pod-to-Pod/Service connectivity diuji
+- [ ] ClusterIP + NodePort diuji
+- [ ] NetworkPolicy diterapkan
+- [ ] Ingress diuji
 
-**Waktu Total:** 2 jam
-**Output:** Kubernetes cluster dengan networking lengkap
+**Output:** Kubernetes networking dipraktikkan dengan cluster minimal dua node yang lebih ringan dan mudah direproduksi.
