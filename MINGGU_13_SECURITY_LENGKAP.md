@@ -1,300 +1,147 @@
-
 # MINGGU 13: NETWORK SECURITY & ZERO TRUST
-## WORKSHOP ADMIN JARINGAN - PENS TI 2026 [file:1]
+## WORKSHOP ADMIN JARINGAN - PENS TI 2026
 
 ### DASAR TEORI (1 jam)
-**Zero Trust Architecture:**
+**Security baseline workshop:**
 ```
-Traditional: Trust internal network
-Zero Trust: "Never trust, always verify"
-
-Principles:
-├── Verify explicitly (MFA, context)
-├── Least privilege access
-├── Assume breach (micro-segmentation)
-└── Continuous monitoring
-```
-
-**Security Layers:**
-```
-Layer 7: Application (WAF)
-Layer 4: Transport (Firewall rules)
-Layer 3: Network (Segmentation)
-Layer 2: Data link (802.1X)
+Laptop / test traffic
+        ↓
+   srv1 (.10)
+ nftables + Suricata + WireGuard
+        ↓
+   srv2 (.11)
+ backend / protected workload
 ```
 
-**Tools:**
-- **nftables**: Modern Linux firewall (replaces iptables)
-- **WireGuard**: Secure VPN (already from Minggu 12)
-- **Suricata**: Network IDS/IPS
+Desain ini tidak mencoba meniru DMZ production secara penuh. Tujuan praktikum adalah memahami policy enforcement, VPN access, IDS, logging, dan response menggunakan dua host yang sudah tersedia.
 
 ### PERTANYAAN TEORI
 1. Zero Trust vs perimeter security model?
-2. nftables vs iptables syntax/performance?
-3. IDS vs IPS mode deployment?
-4. WireGuard vs OpenVPN security audit?
+2. nftables vs iptables?
+3. IDS vs IPS?
+4. Apa keterbatasan menjalankan firewall dan IDS pada host yang sama dalam teaching lab?
 
 ### KEBUTUHAN PRAKTIKUM
-**Topologi:**
-```
-DMZ Zone (srv2) ← nftables → Internal (srv3)
-        ↓ WireGuard VPN          ↓ Suricata IDS
-    Laptop Remote           srv1 (Monitor)
-```
-
 **Hosts:**
 ```
-Firewall/IDS: kXX-srv1 192.168.1XX.10
-DMZ Web: kXX-srv2 192.168.1XX.11
-Internal DB: kXX-srv3 192.168.1XX.12
-```
-
-**Aplikasi:**
-```
-nftables, wireguard, suricata, fail2ban
+Security Gateway/Monitor: kXX-srv1 192.168.1XX.10
+Protected Workload:        kXX-srv2 192.168.1XX.11
+Optional VPN peer:         Laptop mahasiswa
 ```
 
 ### LANGKAH PRAKTIKUM (2 jam)
 
-**1. nftables Firewall Baseline (25 menit)**
+**1. nftables Baseline pada srv1 (25 menit)**
 ```bash
-# srv1: Install nftables
-sudo apt install nftables
-sudo systemctl enable nftables
-sudo systemctl start nftables
+sudo apt update
+sudo apt install -y nftables
+sudo systemctl enable --now nftables
+sudo nft list ruleset > /tmp/nft-before.conf
+```
 
-# Backup existing rules
-sudo nft list ruleset > /tmp/nft-backup.conf
-```
-```bash
-sudo nano /etc/nftables.conf
-```
-```
+Gunakan baseline `/etc/nftables.conf`:
+```nft
 #!/usr/sbin/nft -f
-
 flush ruleset
 
 table inet filter {
     chain input {
         type filter hook input priority 0; policy drop;
-
-        # Allow loopback
         iif lo accept
-
-        # Allow established/related
         ct state established,related accept
-
-        # Allow SSH (rate limit)
-        tcp dport 22 ct state new limit rate 3/minute accept
-
-        # Allow WireGuard
-        udp dport 51820 accept
-
-        # Allow Prometheus/Grafana
-        tcp dport { 9090, 3000, 9100 } accept
-
-        # Allow DNS
-        tcp dport 53 accept
-        udp dport 53 accept
-
-        # Drop invalid
+        ip protocol icmp accept
+        tcp dport 22 accept
+        tcp dport { 53, 80, 443, 3000, 9090, 9100 } accept
+        udp dport { 53, 51820 } accept
         ct state invalid drop
-
-        # Log dropped
-        limit rate 5/minute log prefix "nftables-drop: "
+        limit rate 5/minute log prefix "nft-drop: "
     }
 
     chain forward {
         type filter hook forward priority 0; policy drop;
-
-        # Allow WireGuard tunnel
-        iifname wg0 accept
-        oifname wg0 accept
-
-        # Allow established
         ct state established,related accept
+        iifname "wg0" accept
+        oifname "wg0" accept
     }
 
     chain output {
         type filter hook output priority 0; policy accept;
     }
 }
-
-# NAT for WireGuard
-table ip nat {
-    chain postrouting {
-        type nat hook postrouting priority 100; policy accept;
-        oifname enp1s0 masquerade
-    }
-}
 ```
+
 ```bash
+sudo nft -c -f /etc/nftables.conf
 sudo nft -f /etc/nftables.conf
 sudo nft list ruleset
 ```
 
-**2. Advanced Security Rules (20 menit)**
+**2. Protected Workload pada srv2 (15 menit)**
+Gunakan backend dari Minggu 5 atau jalankan service sederhana:
 ```bash
-# Geo-blocking simulation (block range)
-sudo nft add rule inet filter input ip saddr 192.0.2.0/24 drop
-
-# Port scan detection
-sudo nft add rule inet filter input tcp flags syn / syn,ack ct state new \
-    limit rate over 10/second drop
-
-# SYN flood protection
-sudo nft add rule inet filter input tcp flags syn tcp dport 80 \
-    limit rate 25/second accept
+python3 -m http.server 8081 --bind 0.0.0.0
 ```
+Uji akses langsung dan diskusikan aturan mana yang seharusnya diterapkan pada srv1 bila trafik dirutekan melalui gateway/VPN.
 
-**3. WireGuard VPN Access (sudah dari Minggu 12 - 15 menit)**
-```bash
-# Verify WireGuard running
-sudo wg show
-
-# Add laptop as remote peer
-LAPTOP_PUBKEY="<laptop_wireguard_public_key>"
-sudo wg set wg0 peer $LAPTOP_PUBKEY allowed-ips 10.10.0.4/32
-
-# Test remote access
-ping 10.10.0.1  # From laptop
-ssh adminXX@10.10.0.1  # Secure SSH via VPN
+**3. WireGuard Remote Access (20 menit)**
+Gunakan tunnel Minggu 12. Tambahkan laptop sebagai peer opsional pada srv1:
+```ini
+[Peer]
+PublicKey = <LAPTOP_PUBLIC_KEY>
+AllowedIPs = 10.10.0.10/32
 ```
+Verifikasi handshake dan SSH melalui alamat WireGuard.
 
-**4. Suricata IDS Installation (25 menit)**
+**4. Install Suricata pada srv1 (25 menit)**
 ```bash
-# srv1
-sudo apt install suricata suricata-update
+sudo apt install -y suricata suricata-update
 sudo suricata-update
 sudo systemctl enable suricata
 ```
+Set `HOME_NET` ke subnet kelompok dan interface ke interface lab yang benar, lalu:
 ```bash
-sudo nano /etc/suricata/suricata.yaml
-```
-```yaml
-# Edit interface
-af-packet:
-  - interface: enp1s0
-    threads: 2
-    cluster-id: 99
-
-# HOME_NET
-vars:
-  address-groups:
-    HOME_NET: "[192.168.1XX.0/24]"
-    EXTERNAL_NET: "!$HOME_NET"
-```
-```bash
-sudo systemctl start suricata
-sudo systemctl status suricata
-```
-
-**5. Custom Suricata Rules (20 menit)**
-```bash
-sudo nano /etc/suricata/rules/local.rules
-```
-```
-# Alert ICMP flood
-alert icmp any any -> $HOME_NET any (msg:"ICMP Flood Detected"; \
-    threshold: type both, track by_src, count 10, seconds 5; sid:1000001;)
-
-# Alert SSH brute force
-alert tcp any any -> $HOME_NET 22 (msg:"SSH Brute Force Attempt"; \
-    flags:S; threshold: type both, track by_src, count 5, seconds 60; sid:1000002;)
-
-# Alert SQL injection attempt
-alert http any any -> $HOME_NET any (msg:"Possible SQL Injection"; \
-    content:"UNION SELECT"; nocase; sid:1000003;)
-
-# Alert DNS tunneling
-alert dns any any -> any any (msg:"DNS Query Excessive Length"; \
-    dsize:>512; sid:1000004;)
-```
-```bash
+sudo suricata -T -c /etc/suricata/suricata.yaml
 sudo systemctl restart suricata
-sudo tail -f /var/log/suricata/fast.log
 ```
 
-**6. Testing & Attack Simulation (20 menit)**
+**5. Custom Detection Rule (20 menit)**
+Tambahkan rule sederhana yang aman untuk lab, misalnya mendeteksi ICMP atau HTTP test pattern. Contoh:
+```text
+alert icmp any any -> $HOME_NET any (msg:"LAB ICMP detected"; sid:1000001; rev:1;)
+```
+Reload Suricata dan periksa log.
+
+**6. Detection Test dari srv2/laptop (20 menit)**
 ```bash
-# Test 1: Port scan detection (dari srv2)
-nmap -sS 192.168.1XX.10  # Should trigger alert
-
-# Test 2: ICMP flood
-ping -f 192.168.1XX.10  # Fast ping
-
-# Test 3: SSH brute force simulation
-for i in {1..10}; do ssh fake@192.168.1XX.10; done
-
-# Check logs
-sudo tail -20 /var/log/suricata/fast.log
-sudo journalctl -u nftables | grep drop
+ping -c 5 192.168.1XX.10
+nmap -sT -p 22,53,80,443 192.168.1XX.10
 ```
-
-**7. Fail2ban Integration (15 menit)**
+Gunakan hanya host lab milik kelompok sendiri. Periksa:
 ```bash
-sudo apt install fail2ban
-sudo nano /etc/fail2ban/jail.local
+sudo tail -50 /var/log/suricata/fast.log
+sudo journalctl -k | grep nft-drop
 ```
-```
-[sshd]
-enabled = true
-port = 22
-filter = sshd
-logpath = /var/log/auth.log
-maxretry = 3
-bantime = 3600
-```
+
+**7. Fail2ban untuk SSH (15 menit)**
 ```bash
-sudo systemctl enable fail2ban
-sudo systemctl start fail2ban
-sudo fail2ban-client status sshd
+sudo apt install -y fail2ban
+sudo systemctl enable --now fail2ban
+sudo fail2ban-client status
 ```
+Konfigurasikan jail SSH sederhana dan uji dengan cara yang terkendali pada akun lab.
 
 ### UJI KONFIGURASI
-```
-**nftables:**
-sudo nft list ruleset | grep policy
-chain input { ... policy drop; }
-
-**Suricata:**
-sudo suricatasc -c "dump-counters" | grep alerts
-alerts: 15
-
-**WireGuard VPN:**
-sudo wg show | grep handshake
-latest handshake: 5 seconds ago
-```
-
-**Screenshot Wajib (14 gambar):**
-1. `/etc/nftables.conf` full rules
-2. `nft list ruleset`
-3. WireGuard peer laptop
-4. `wg show` handshake
-5. Suricata.yaml config
-6. local.rules custom
-7. `systemctl status suricata`
-8. fast.log alerts
-9. nmap scan detection
-10. SSH brute force alert
-11. fail2ban status
-12. `fail2ban-client status sshd`
-13. nftables drop log
-14. Grafana security dashboard (optional)
-
-### PERTANYAAN SEKITAR PRAKTIKUM
-1. Policy drop vs accept default tradeoff?
-2. Suricata IDS vs IPS mode deployment?
-3. Rate limiting vs connection tracking?
-4. Zero Trust micro-segmentation implementation?
+- nftables dapat divalidasi dan policy input adalah drop.
+- WireGuard peer dapat digunakan untuk akses terautentikasi.
+- Suricata menghasilkan alert dari trafik uji.
+- Mahasiswa dapat membedakan blocking oleh firewall dan detection oleh IDS.
 
 ### CHECKLIST TUGAS MINGGU 13
-- [ ] nftables baseline policy drop
-- [ ] WireGuard remote access laptop
-- [ ] Suricata IDS + custom rules
-- [ ] Attack simulation detected
-- [ ] fail2ban SSH protection
-- [ ] 14 screenshot lengkap
+- [ ] nftables baseline aktif
+- [ ] Protected workload srv2 tersedia
+- [ ] WireGuard remote peer diuji
+- [ ] Suricata aktif dan rule test menghasilkan alert
+- [ ] Fail2ban aktif
+- [ ] Log firewall dan IDS dianalisis
 
-**Waktu Total:** 2 jam
-**Output:** Production-grade network security stack dengan Zero Trust principles
+**Output:** Security enforcement dan monitoring dipraktikkan dengan topologi dua node yang konsisten.
