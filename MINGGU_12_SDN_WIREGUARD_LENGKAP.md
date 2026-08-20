@@ -1,264 +1,118 @@
-
-# MINGGU 12: SOFTWARE-DEFINED NETWORKING (SDN)
-## WORKSHOP ADMIN JARINGAN - PENS TI 2026 [file:1]
+# MINGGU 12: SOFTWARE-DEFINED NETWORKING (SDN) DENGAN WIREGUARD
+## WORKSHOP ADMIN JARINGAN - PENS TI 2026
 
 ### DASAR TEORI (1 jam)
-**SDN Architecture:**
+WireGuard digunakan sebagai contoh software-defined overlay. Baseline lab dibuat minimal:
 ```
-Application Layer (Network Orchestration)
-        ↓ Northbound API
-Control Plane (SDN Controller)
-        ↓ Southbound API (OpenFlow)
-Data Plane (Virtual Network/Tunnels)
+srv1 (.10 / wg0 10.10.0.1) ← encrypted tunnel → srv2 (.11 / wg0 10.10.0.2)
 ```
-
-**WireGuard sebagai SDN Data Plane:**
-- Encrypted tunnels (software-defined overlay)
-- Peer-to-peer mesh network
-- Dynamic routing antar subnet
-- Centralized config management (SDN-like)
-
-**SD-WAN Concepts:**
-```
-Site A ← WireGuard Tunnel → Controller ← Tunnel → Site B
-    (192.168.101.0/24)                    (192.168.102.0/24)
-                    ↓ Policy routing
-              Internet + MPLS (Path selection)
-```
+Laptop dapat ditambahkan sebagai peer ketiga pada Minggu 13.
 
 ### PERTANYAAN TEORI
-1. WireGuard vs VXLAN untuk overlay network?
-2. SDN controller centralized vs WireGuard P2P?
-3. Policy-based routing di SD-WAN use case?
-4. WireGuard handshake vs IPsec overhead?
+1. Apa beda underlay dan overlay network?
+2. Apa fungsi `AllowedIPs` pada WireGuard?
+3. Apa fungsi `PersistentKeepalive`?
+4. Apa tradeoff hub-spoke, point-to-point, dan full mesh?
 
 ### KEBUTUHAN PRAKTIKUM
-**Topologi SDN WireGuard:**
-```
-Controller/Hub: srv1 (192.168.1XX.10, wg0: 10.10.0.1/24)
-                    ↓ WireGuard tunnels
-Spoke 1: srv2 (192.168.1XX.11, wg0: 10.10.0.2/24)
-Spoke 2: srv3 (192.168.1XX.12, wg0: 10.10.0.3/24)
-                    ↓ Policy routing
-            Internet traffic via Hub (NAT)
-```
-
 **Hosts:**
 ```
-Hub (Controller): kXX-srv1 192.168.1XX.10
-Spoke 1: kXX-srv2 192.168.1XX.11
-Spoke 2: kXX-srv3 192.168.1XX.12
-```
-
-**Aplikasi:**
-```
-wireguard, wireguard-tools, qrencode, python3
+Gateway/Hub: kXX-srv1 192.168.1XX.10, wg0 10.10.0.1/24
+Peer:        kXX-srv2 192.168.1XX.11, wg0 10.10.0.2/24
 ```
 
 ### LANGKAH PRAKTIKUM (2 jam)
 
-**1. WireGuard Installation All Nodes (10 menit)**
+**1. Install WireGuard pada kedua node (10 menit)**
 ```bash
-# srv1, srv2, srv3
 sudo apt update
-sudo apt install wireguard wireguard-tools qrencode
-sudo modprobe wireguard
-lsmod | grep wireguard
+sudo apt install -y wireguard wireguard-tools
 ```
 
-**2. Key Generation Hub & Spokes (15 menit)**
+**2. Generate Key Pair pada srv1 dan srv2 (15 menit)**
 ```bash
-# srv1 Hub
-wg genkey | sudo tee /etc/wireguard/private.key
-sudo chmod 600 /etc/wireguard/private.key
-sudo cat /etc/wireguard/private.key | wg pubkey | sudo tee /etc/wireguard/public.key
-HUB_PUBKEY=$(sudo cat /etc/wireguard/public.key)
+umask 077
+wg genkey | tee private.key | wg pubkey > public.key
+cat public.key
+```
+Catat public key masing-masing host. Jangan memasukkan private key ke repository Git.
 
-# srv2 Spoke1 (ulangi untuk srv3)
-wg genkey | sudo tee /etc/wireguard/private.key
-sudo chmod 600 /etc/wireguard/private.key
-sudo cat /etc/wireguard/private.key | wg pubkey | sudo tee /etc/wireguard/public.key
-SPOKE1_PUBKEY=$(sudo cat /etc/wireguard/public.key)
-```
-
-**3. Hub Configuration srv1 (20 menit)**
-```bash
-sudo nano /etc/wireguard/wg0.conf
-```
-```
+**3. Konfigurasi srv1 (20 menit)**
+`/etc/wireguard/wg0.conf`:
+```ini
 [Interface]
 Address = 10.10.0.1/24
 ListenPort = 51820
-PrivateKey = <HUB_PRIVATE_KEY>
-PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o enp1s0 -j MASQUERADE
-PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o enp1s0 -j MASQUERADE
+PrivateKey = <SRV1_PRIVATE_KEY>
 
-# Spoke 1 (srv2)
 [Peer]
-PublicKey = <SPOKE1_PUBLIC_KEY>
-AllowedIPs = 10.10.0.2/32, 192.168.1XX.11/32
-
-# Spoke 2 (srv3)
-[Peer]
-PublicKey = <SPOKE2_PUBLIC_KEY>
-AllowedIPs = 10.10.0.3/32, 192.168.1XX.12/32
-```
-```bash
-# Enable IP forwarding
-echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
-
-# Start WireGuard
-sudo wg-quick up wg0
-sudo systemctl enable wg-quick@wg0
-sudo wg show
+PublicKey = <SRV2_PUBLIC_KEY>
+AllowedIPs = 10.10.0.2/32
 ```
 
-**4. Spoke Configuration srv2 & srv3 (20 menit)**
-```bash
-# srv2
-sudo nano /etc/wireguard/wg0.conf
-```
-```
+**4. Konfigurasi srv2 (20 menit)**
+```ini
 [Interface]
 Address = 10.10.0.2/24
-PrivateKey = <SPOKE1_PRIVATE_KEY>
+PrivateKey = <SRV2_PRIVATE_KEY>
 
 [Peer]
-PublicKey = <HUB_PUBLIC_KEY>
+PublicKey = <SRV1_PUBLIC_KEY>
 Endpoint = 192.168.1XX.10:51820
-AllowedIPs = 10.10.0.0/24, 192.168.1XX.0/24
+AllowedIPs = 10.10.0.1/32
 PersistentKeepalive = 25
 ```
+
+**5. Bring Up dan Verify (20 menit)**
+Pada kedua node:
 ```bash
-# srv3
-sudo nano /etc/wireguard/wg0.conf
+sudo systemctl enable --now wg-quick@wg0
+sudo wg show
+ip addr show wg0
 ```
-```
-[Interface]
-Address = 10.10.0.3/24
-PrivateKey = <SPOKE2_PRIVATE_KEY>
-
-[Peer]
-PublicKey = <HUB_PUBLIC_KEY>
-Endpoint = 192.168.1XX.10:51820
-AllowedIPs = 10.10.0.0/24, 192.168.1XX.0/24
-PersistentKeepalive = 25
-```
+Dari srv2:
 ```bash
-# Start spokes
-sudo wg-quick up wg0
-sudo systemctl enable wg-quick@wg0
+ping -c4 10.10.0.1
 ```
-
-**5. Mesh Connectivity Test (15 menit)**
+Dari srv1:
 ```bash
-# srv2 → Hub
-ping -c 4 10.10.0.1
-
-# srv2 → srv3 (via Hub routing)
-ping -c 4 10.10.0.3
-
-# Trace route
-traceroute 10.10.0.3
-
-# Bandwidth test encrypted tunnel
-iperf3 -s  # srv3
-iperf3 -c 10.10.0.3  # srv2
+ping -c4 10.10.0.2
 ```
 
-**6. Policy-Based Routing (SD-WAN simulation - 20 menit)**
+**6. Routing Exercise (25 menit)**
+Aktifkan IP forwarding pada srv1:
 ```bash
-# srv2: Route internet via Hub (0.0.0.0/0)
-sudo wg-quick down wg0
-sudo nano /etc/wireguard/wg0.conf
+echo 'net.ipv4.ip_forward=1' | sudo tee /etc/sysctl.d/99-lab-forward.conf
+sudo sysctl --system
 ```
-```
-[Peer]
-AllowedIPs = 0.0.0.0/0  # All traffic via Hub
-```
+Tambahkan route/AllowedIPs secara bertahap untuk mendemonstrasikan bagaimana policy overlay mempengaruhi trafik. Jangan langsung mengalihkan `0.0.0.0/0`; mahasiswa terlebih dahulu memverifikasi route spesifik agar tidak kehilangan akses SSH.
+
+**7. Throughput & Failure Test (20 menit)**
 ```bash
-sudo wg-quick up wg0
+# srv1
+iperf3 -s
 
-# Test internet via Hub
-curl ifconfig.me  # Should show Hub IP (NAT)
-traceroute 8.8.8.8  # Path via 10.10.0.1
+# srv2
+iperf3 -c 10.10.0.1
 ```
-
-**7. SDN Controller Simulation (Python - 20 menit)**
+Kemudian hentikan tunnel, amati routing, dan hidupkan kembali:
 ```bash
-# srv1: Simple WireGuard orchestrator
-nano wg_controller.py
-```
-```python
-import subprocess
-import json
-
-class WireGuardSDN:
-    def add_peer(self, public_key, allowed_ips):
-        cmd = f"wg set wg0 peer {public_key} allowed-ips {allowed_ips}"
-        subprocess.run(cmd.split())
-        print(f"Peer added: {allowed_ips}")
-
-    def remove_peer(self, public_key):
-        cmd = f"wg set wg0 peer {public_key} remove"
-        subprocess.run(cmd.split())
-        print(f"Peer removed: {public_key}")
-
-    def show_status(self):
-        result = subprocess.run(['wg', 'show'], capture_output=True, text=True)
-        print(result.stdout)
-
-# Usage
-controller = WireGuardSDN()
-controller.show_status()
-```
-```bash
-sudo python3 wg_controller.py
+sudo systemctl stop wg-quick@wg0
+ip route
+sudo systemctl start wg-quick@wg0
 ```
 
 ### UJI KONFIGURASI
-```
-**srv1 wg show:**
-interface: wg0
-  public key: <HUB_KEY>
-  listening port: 51820
-peer: <SPOKE1_KEY>
-  endpoint: 192.168.1XX.11:random
-  allowed ips: 10.10.0.2/32
-  latest handshake: 10 seconds ago
-  transfer: 5 MiB received, 3 MiB sent
-
-**srv2 ping 10.10.0.3:** 64 bytes from 10.10.0.3: icmp_seq=1 ttl=64 time=2.1 ms
-**iperf3:** 850 Mbits/sec (encrypted tunnel overhead ~15%)
-```
-
-**Screenshot Wajib (12 gambar):**
-1. All nodes `wg show`
-2. Hub wg0.conf
-3. Spoke1 wg0.conf
-4. Handshake success
-5. Ping srv2 → srv3
-6. Traceroute via Hub
-7. iperf3 encrypted tunnel
-8. Policy routing `AllowedIPs 0.0.0.0/0`
-9. Internet via Hub (curl ifconfig.me)
-10. wg_controller.py output
-11. `ip addr show wg0`
-12. `iptables -t nat -L`
-
-### PERTANYAAN SEKITAR PRAKTIKUM
-1. WireGuard handshake gagal, cek firewall port 51820 UDP?
-2. AllowedIPs 0.0.0.0/0 vs 10.10.0.0/24 routing difference?
-3. PersistentKeepalive 25 fungsi NAT traversal?
-4. SD-WAN traffic steering policy implementation?
+- Handshake aktif pada kedua node.
+- `10.10.0.1` dan `10.10.0.2` saling reachable.
+- Mahasiswa dapat menjelaskan route yang dibuat dari `AllowedIPs`.
+- Failure/recovery tunnel dapat diamati.
 
 ### CHECKLIST TUGAS MINGGU 12
-- [ ] WireGuard Hub-Spoke topology
-- [ ] 3-node mesh connectivity
-- [ ] Policy-based routing (0.0.0.0/0)
-- [ ] SDN controller simulation (Python)
-- [ ] 12 screenshot lengkap
+- [ ] WireGuard installed pada srv1 dan srv2
+- [ ] Key pair dibuat dengan permission aman
+- [ ] Tunnel 2-node aktif
+- [ ] Routing exercise selesai
+- [ ] Throughput dan failure test selesai
 
-**Waktu Total:** 2 jam
-**Output:** SD-WAN environment dengan WireGuard overlay network
+**Output:** Overlay WireGuard minimal yang cukup untuk memahami tunnel, routing policy, dan encrypted transport.
