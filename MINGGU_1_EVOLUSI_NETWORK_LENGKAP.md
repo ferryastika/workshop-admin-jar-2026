@@ -1,6 +1,5 @@
-
 # MINGGU 1: PENGENALAN ADMINISTRASI JARINGAN MODERN
-## WORKSHOP ADMIN JARINGAN - PENS TI 2026 [file:1]
+## WORKSHOP ADMIN JARINGAN - PENS TI 2026
 
 ### DASAR TEORI (1 jam)
 **Evolusi Administrasi Jaringan:**
@@ -12,6 +11,9 @@
 - Kelompok XX: 192.168.1XX.0/24 (VLAN 1XX)
 - Mikrotik RB1100: Gateway 192.168.1XX.1
 - Proxmox Server: 10.252.108.10
+- 2 VM per kelompok:
+  - kXX-srv1: infrastructure/control-plane
+  - kXX-srv2: workload/data-plane
 
 ### PERTANYAAN TEORI
 1. Apa beda CLI manual vs Ansible?
@@ -26,15 +28,16 @@ Internet ← NAT ← [10.252.108.1]
 [Mikrotik Switch VLAN 1XX]
               ↓
 [RB1100] 192.168.1XX.1
-              ↓
-VM1: 192.168.1XX.10 ← Laptop (SSH)
+        ├── srv1: 192.168.1XX.10
+        ├── srv2: 192.168.1XX.11
+        └── Laptop mahasiswa
 ```
 
 **Hosts:**
-- Hostname: kXX-srv1
-- IP: 192.168.1XX.10/24
+- kXX-srv1: 192.168.1XX.10/24
+- kXX-srv2: 192.168.1XX.11/24
 - GW: 192.168.1XX.1
-- DNS: 10.252.108.53
+- DNS awal: 10.252.108.53
 
 ### LANGKAH PRAKTIKUM (2 jam)
 
@@ -44,7 +47,7 @@ https://10.252.108.10:8006
 User: kelompokXX@pve
 ```
 
-**2. Install Ubuntu 24.04 (30 menit)**
+**2. Install Ubuntu 24.04 pada srv1 (30 menit)**
 - Console VM → Install Ubuntu Server
 - Network: 192.168.1XX.10/24, GW 192.168.1XX.1
 - Username: adminXX
@@ -61,7 +64,9 @@ network:
     enp1s0:
       dhcp4: no
       addresses: [192.168.1XX.10/24]
-      gateway4: 192.168.1XX.1
+      routes:
+        - to: default
+          via: 192.168.1XX.1
       nameservers:
         addresses: [10.252.108.53, 8.8.8.8]
 ```
@@ -73,7 +78,7 @@ sudo netplan apply
 ```bash
 sudo apt update
 sudo apt install -y vim htop git curl wget net-tools \
-  traceroute mtr dnsutils nmap tcpdump
+  traceroute mtr dnsutils nmap tcpdump iperf3
 ```
 
 **5. Test Konektivitas (20 menit)**
@@ -85,10 +90,20 @@ ping -c4 google.com        # DNS
 ssh adminXX@192.168.1XX.10 # Laptop test
 ```
 
-**6. VM2 & VM3 (15 menit)**
+**6. Siapkan srv2 (20 menit)**
 ```
-kXX-srv2: 192.168.1XX.11 (Ubuntu)
-kXX-srv3: 192.168.1XX.12 (Rocky Linux 9)
+kXX-srv2: 192.168.1XX.11/24
+Gateway: 192.168.1XX.1
+OS: Ubuntu Server 24.04
+```
+
+Ulangi konfigurasi dasar srv1 pada srv2, lalu verifikasi konektivitas dua arah:
+```bash
+# dari srv1
+ping -c4 192.168.1XX.11
+
+# dari srv2
+ping -c4 192.168.1XX.10
 ```
 
 ### UJI KONFIGURASI
@@ -101,14 +116,15 @@ $ ip route
 default via 192.168.1XX.1
 
 $ ping google.com
-PING google.com (142.250.190.78) 56 bytes
+PING google.com (...) 56 bytes
 ```
 
 **Screenshot Wajib:**
-1. Proxmox login + VM list
-2. `ip addr` + `ip route`
-3. Ping tests (4 screenshot)
+1. Proxmox login + 2 VM kelompok
+2. `ip addr` + `ip route` srv1
+3. Ping gateway/backbone/internet
 4. SSH session dari laptop
+5. Ping srv1 ↔ srv2
 
 ### PERTANYAAN SEKITAR PRAKTIKUM
 1. Apa yang terjadi jika gateway salah di netplan?
@@ -117,12 +133,13 @@ PING google.com (142.250.190.78) 56 bytes
 4. Bedakan `netplan generate` vs `netplan apply`?
 
 ### CHECKLIST TUGAS
-- [ ] VM1 Ubuntu installed
-- [ ] Static IP working
+- [ ] srv1 Ubuntu installed
+- [ ] srv2 Ubuntu installed
+- [ ] Static IP kedua VM working
 - [ ] Internet access OK
 - [ ] SSH dari laptop OK
-- [ ] VM2 & VM3 ready
+- [ ] srv1 dan srv2 saling terhubung
 - [ ] 5 screenshot lab report
 
 **Waktu Total:** 2 jam 30 menit
-**Output:** Environment siap untuk 13 minggu praktikum selanjutnya
+**Output:** Environment 2-node siap untuk 13 minggu praktikum selanjutnya
